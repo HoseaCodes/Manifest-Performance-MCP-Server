@@ -1,0 +1,13 @@
+# Compiled binary
+/bin/
+/workout-mcp
+
+# Go workspace file — local to a developer's machine
+go.work
+go.work.sum
+
+# Never commit a token or a base URL for a live deployment
+.env
+.env.local
+
+.DS_Store
