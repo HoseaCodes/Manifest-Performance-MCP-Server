@@ -29,6 +29,33 @@ type APIError struct {
 	// RequestID ties a failure an assistant reports to one set of server log
 	// lines. Without it, "it didn't work" is unresolvable.
 	RequestID string
+	// Findings is why a session was refused by safety validation.
+	//
+	// Carried because the alternative is useless: an assistant told only "this
+	// session did not pass safety validation" cannot tell which item was wrong
+	// or why, so it can only resubmit a guess. The API sends these deliberately;
+	// dropping them here silently discarded the one thing that makes the refusal
+	// actionable.
+	Findings []Finding
+	// Warnings did not block, but the next session should account for them.
+	Warnings []Finding
+	// Details is every other key the error body carried.
+	//
+	// Kept whole rather than enumerated. A 409 on a taken slot returns slotId
+	// and revision -- exactly what supersede needs to recover -- and those were
+	// being dropped because nothing here declared them. Enumerating fields means
+	// the next detail the API adds is silently lost too, so the passthrough is
+	// the actual fix.
+	Details map[string]json.RawMessage
+}
+
+// Finding is one rule that fired against one item.
+type Finding struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	ItemKey  string `json:"itemKey,omitempty"`
+	ItemName string `json:"itemName,omitempty"`
 }
 
 type FieldError struct {
@@ -44,8 +71,10 @@ func (e *APIError) Error() string {
 }
 
 type errorBody struct {
-	Error  string       `json:"error"`
-	Errors []FieldError `json:"errors"`
+	Error    string       `json:"error"`
+	Errors   []FieldError `json:"errors"`
+	Findings []Finding    `json:"findings"`
+	Warnings []Finding    `json:"warnings"`
 }
 
 // Client talks to the manifestfitness internal API.
@@ -122,10 +151,24 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if resp.StatusCode >= 400 {
 		var parsed errorBody
 		_ = json.Unmarshal(raw, &parsed)
+
+		// Everything the struct did not claim, so no detail is lost by omission.
+		details := map[string]json.RawMessage{}
+		_ = json.Unmarshal(raw, &details)
+		for _, known := range []string{"error", "errors", "findings", "warnings", "requestId"} {
+			delete(details, known)
+		}
+		if len(details) == 0 {
+			details = nil
+		}
+
 		return nil, requestID, &APIError{
 			Status:    resp.StatusCode,
 			Message:   parsed.Error,
 			Errors:    parsed.Errors,
+			Findings:  parsed.Findings,
+			Warnings:  parsed.Warnings,
+			Details:   details,
 			RequestID: requestID,
 		}
 	}

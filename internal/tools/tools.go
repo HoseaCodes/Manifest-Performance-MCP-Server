@@ -36,6 +36,10 @@ type ContextInput struct {
 	PerformanceDays int      `json:"performanceDays,omitempty" jsonschema:"window for per-exercise history in days, max 90"`
 	ReadinessDays   int      `json:"readinessDays,omitempty" jsonschema:"window for readiness in days, max 30"`
 	Exercises       []string `json:"exercises,omitempty" jsonschema:"movements to return history for, capped at 20"`
+	// Pass "evening" when generating an evening session: the response then
+	// carries an eveningAdjustment directive computed from the morning's
+	// outcome. Work out that adjustment yourself and it varies between runs.
+	SessionOfDay string `json:"sessionOfDay,omitempty" jsonschema:"morning or evening; evening returns the adjustment directive"`
 }
 
 // Section and Item mirror the API's prescription shape.
@@ -175,18 +179,48 @@ func explain(err error) *mcp.CallToolResult {
 		401: "The service token is missing, expired or not valid for this API.",
 		403: "The token lacks the scope this action requires, or the athlete has not granted it.",
 		404: "Not found, or it belongs to a different athlete.",
-		409: "This session slot is already taken, or it changed since you read it. Re-read the slot and supersede instead of creating.",
+		409: "This slot is already taken, or it changed since you read it. Use the slotId and revision " +
+			"returned here as expectedRevision and call supersede_workout_prescription instead of creating.",
 		422: "The request was well formed but failed validation. See errors for the specific fields.",
 		429: "Rate limited. Wait before retrying.",
 	}[apiErr.Status]
 
-	payload, _ := json.MarshalIndent(map[string]any{
+	/*
+	 * Safety findings replace the generic guidance when present.
+	 *
+	 * "This session did not pass safety validation" tells an assistant nothing
+	 * it can act on -- it cannot know which item was wrong or which rule fired,
+	 * so its only move is to resubmit a guess. The findings name both. They were
+	 * being dropped before reaching here, which made the refusal a dead end.
+	 */
+	if len(apiErr.Findings) > 0 {
+		guidance = "This session was refused. Each finding names the item and the rule. " +
+			"Fix those items and submit a corrected session -- do not resubmit this one unchanged."
+	}
+
+	body := map[string]any{
 		"status":    apiErr.Status,
 		"error":     apiErr.Error(),
 		"errors":    apiErr.Errors,
 		"guidance":  guidance,
 		"requestId": apiErr.RequestID,
-	}, "", "  ")
+	}
+	if len(apiErr.Findings) > 0 {
+		body["findings"] = apiErr.Findings
+	}
+	if len(apiErr.Warnings) > 0 {
+		body["warnings"] = apiErr.Warnings
+	}
+	// A 409 carries slotId and revision here, which is what supersede needs to
+	// recover. Merged rather than nested so the assistant reads them alongside
+	// the guidance that tells it to use them.
+	for key, value := range apiErr.Details {
+		if _, taken := body[key]; !taken {
+			body[key] = value
+		}
+	}
+
+	payload, _ := json.MarshalIndent(body, "", "  ")
 
 	return textResult(true, string(payload))
 }
@@ -224,7 +258,9 @@ func Register(server *mcp.Server, api *client.Client) {
 			"profile, program position, equipment, injuries, limitations, readiness, recent " +
 			"prescriptions and executions. Every optional block carries a state — \"not_reported\" " +
 			"means nobody asked, which is NOT the same as \"confirmed_none\". Never treat an empty " +
-			"injuries list as an absence of injuries unless the state says confirmed_none.",
+			"injuries list as an absence of injuries unless the state says confirmed_none. " +
+			"When sessionOfDay is evening the response carries an eveningAdjustment directive; " +
+			"follow it rather than deriving your own adjustment from the morning's RPEs.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ContextInput) (*mcp.CallToolResult, any, error) {
 		query := url.Values{}
 		if in.WorkoutLimit > 0 {
@@ -238,6 +274,9 @@ func Register(server *mcp.Server, api *client.Client) {
 		}
 		if len(in.Exercises) > 0 {
 			query.Set("exercises", strings.Join(in.Exercises, ","))
+		}
+		if in.SessionOfDay != "" {
+			query.Set("sessionOfDay", in.SessionOfDay)
 		}
 
 		raw, _, err := api.TrainingContext(ctx, query)
@@ -288,8 +327,20 @@ func Register(server *mcp.Server, api *client.Client) {
 			"Refuses once the athlete has started the session. The replaced prescription is kept, " +
 			"not deleted.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SupersedeInput) (*mcp.CallToolResult, any, error) {
+		/*
+		 * slotId identifies the slot in the PATH, and the request body is
+		 * validated strictly, so sending it in the body too is rejected outright
+		 * with "Unrecognized key: slotId" -- this tool could not succeed at all.
+		 *
+		 * Shadowed rather than removed from SupersedeInput, because the field is
+		 * how the tool takes the slot from its caller. An outer field of the same
+		 * name at depth 0 wins over the embedded one at depth 1, and empty plus
+		 * omitempty drops it from the encoded body. supersedeBodyOmitsSlotID in
+		 * the tests pins this, since the mechanism is not obvious on sight.
+		 */
 		body := struct {
 			SupersedeInput
+			SlotID string `json:"slotId,omitempty"`
 			Source source `json:"source"`
 		}{SupersedeInput: in, Source: aiGenerated()}
 
