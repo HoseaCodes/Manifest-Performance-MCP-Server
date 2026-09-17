@@ -1,4 +1,4 @@
-# workout-mcp
+# Manifest Performance MCP Server
 
 An MCP server, in Go, exposing four tools over the `manifestfitness` internal
 API.
