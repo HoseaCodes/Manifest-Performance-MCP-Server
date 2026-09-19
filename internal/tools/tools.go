@@ -253,7 +253,8 @@ func rawResult(raw json.RawMessage) *mcp.CallToolResult {
 // Register wires the four tools onto a server.
 func Register(server *mcp.Server, api *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "get_generation_context",
+		Name:        "get_generation_context",
+		InputSchema: portableSchema[ContextInput](),
 		Description: "Everything needed to design a session for the athlete this token acts for: " +
 			"profile, program position, equipment, injuries, limitations, readiness, recent " +
 			"prescriptions and executions. Every optional block carries a state — \"not_reported\" " +
@@ -287,7 +288,8 @@ func Register(server *mcp.Server, api *client.Client) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "create_workout_prescription",
+		Name:        "create_workout_prescription",
+		InputSchema: portableSchema[CreateInput](),
 		Description: "Create one prescribed session for a morning or evening slot. Fails with 409 " +
 			"if that slot already has a prescription — use supersede_workout_prescription to " +
 			"replace one. Supply an idempotencyKey so a retry returns the original rather than " +
@@ -308,7 +310,8 @@ func Register(server *mcp.Server, api *client.Client) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "get_workout_prescription",
+		Name:        "get_workout_prescription",
+		InputSchema: portableSchema[GetInput](),
 		Description: "Read back a prescription by id, to confirm what was stored. Returns 404 if " +
 			"it belongs to a different athlete.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GetInput) (*mcp.CallToolResult, any, error) {
@@ -320,7 +323,8 @@ func Register(server *mcp.Server, api *client.Client) {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "supersede_workout_prescription",
+		Name:        "supersede_workout_prescription",
+		InputSchema: portableSchema[SupersedeInput](),
 		Description: "Replace an unstarted session — for example after poor readiness or a hard " +
 			"previous session. Requires expectedRevision from the slot you just read; a mismatch " +
 			"returns 409, meaning someone changed it and you should re-read rather than overwrite. " +
