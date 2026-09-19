@@ -217,6 +217,20 @@ func Handler(cfg Config) http.Handler {
 	mux.Handle("/mcp", handler)
 	mux.Handle("/mcp/", handler)
 
+	/*
+	 * A second endpoint exposing exactly one trivial tool — see minimal.go.
+	 *
+	 * Diagnostic, not part of the product surface. It exists to separate "this
+	 * client cannot bind any tool" from "this client rejects something in these
+	 * schemas", which the real endpoint cannot distinguish on its own.
+	 */
+	minimalHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return minimalServer(cfg.Version)
+	}, mcpOptions)
+	minimal := logRequests(requireBearer(cfg, discoverShim(minimalHandler)))
+	mux.Handle("/mcp-min", minimal)
+	mux.Handle("/mcp-min/", minimal)
+
 	return mux
 }
 
@@ -326,7 +340,10 @@ func logRequests(next http.Handler) http.Handler {
 		if method == "" {
 			method = r.Method
 		}
-		log.Printf("mcp %s", method)
+		// Path included: the real surface and the minimal diagnostic one are
+		// both mounted, and "tools/list succeeded" means nothing without
+		// knowing which of them answered.
+		log.Printf("mcp %s %s", r.URL.Path, method)
 		next.ServeHTTP(w, r)
 	})
 }

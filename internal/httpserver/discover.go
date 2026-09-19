@@ -124,7 +124,7 @@ func discoverShim(next http.Handler) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 
 		if answerDiscover(w, raw, r.Header.Get("Accept")) {
-			log.Printf("mcp server/discover (answered locally)")
+			log.Printf("mcp %s server/discover (answered locally)", r.URL.Path)
 			return
 		}
 		next.ServeHTTP(w, r)
