@@ -275,16 +275,18 @@ func TestSessionIdIsExposedToTheBrowser(t *testing.T) {
 }
 
 /*
-TestDiscoverIsAnswered covers the probe that decided whether tools were ever
-requested.
+The discover shim is deliberately unwired — see the note in Handler.
 
-ChatGPT calls SEP-2575 `server/discover` before anything else. The SDK's
-transport rejects it with `-32601`, which is a legal answer that a client is
-meant to fall back from — and this one does not. It reports "no callable
-actions" and never sends `tools/list`, so tools that exist and are valid are
-simply never asked for.
+Answering SEP-2575 `server/discover` with the versions this server actually
+speaks made ChatGPT stop at that point, where the SDK's `-32601` had made it
+fall back to `initialize` + `tools/list` and receive the tools. The refusal is
+both the better behaviour with that client and the truthful one: this transport
+does not speak the stateless protocol discover exists to negotiate.
+
+This asserts the shim stays unwired, so it is not re-enabled without someone
+reading why it was turned off.
 */
-func TestDiscoverIsAnswered(t *testing.T) {
+func TestDiscoverIsNotAnsweredLocally(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+usableTestToken())
@@ -293,24 +295,8 @@ func TestDiscoverIsAnswered(t *testing.T) {
 	res := httptest.NewRecorder()
 	testHandler().ServeHTTP(res, req)
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", res.Code)
-	}
-
-	var envelope struct {
-		Result struct {
-			SupportedVersions []string `json:"supportedVersions"`
-		} `json:"result"`
-		Error any `json:"error"`
-	}
-	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode: %v — body %s", err, res.Body.String())
-	}
-	if envelope.Error != nil {
-		t.Fatalf("discover returned an error: %v", envelope.Error)
-	}
-	if len(envelope.Result.SupportedVersions) == 0 {
-		t.Fatal("no supportedVersions returned")
+	if strings.Contains(res.Body.String(), "supportedVersions") {
+		t.Error("discover was answered locally; the client stops there instead of falling back")
 	}
 }
 

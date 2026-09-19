@@ -213,7 +213,21 @@ func Handler(cfg Config) http.Handler {
 	// still needs a credential. Answering it earlier — where the body is
 	// already buffered for logging — was a hole around the bearer check, and a
 	// test caught it.
-	handler := logRequests(requireBearer(cfg, discoverShim(mcpHandler)))
+	/*
+	 * No discover shim.
+	 *
+	 * It was added because ChatGPT probes SEP-2575 `server/discover` and the
+	 * SDK's transport answers `-32601`. Answering it instead — honestly, with
+	 * the versions this server actually speaks — made things *worse*: the
+	 * client stopped there, where the error had made it fall back to
+	 * `initialize` + `tools/list` and actually receive the tools.
+	 *
+	 * So the refusal is the better behaviour with this client, and it is also
+	 * the truthful one: this server does not speak the stateless protocol that
+	 * discover exists to negotiate. `discover.go` is kept for the next attempt,
+	 * unwired.
+	 */
+	handler := logRequests(requireBearer(cfg, mcpHandler))
 	mux.Handle("/mcp", handler)
 	mux.Handle("/mcp/", handler)
 
@@ -227,7 +241,7 @@ func Handler(cfg Config) http.Handler {
 	minimalHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return minimalServer(cfg.Version)
 	}, mcpOptions)
-	minimal := logRequests(requireBearer(cfg, discoverShim(minimalHandler)))
+	minimal := logRequests(requireBearer(cfg, minimalHandler))
 	mux.Handle("/mcp-min", minimal)
 	mux.Handle("/mcp-min/", minimal)
 

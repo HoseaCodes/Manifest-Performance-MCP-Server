@@ -130,3 +130,7 @@ func discoverShim(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// Unwired — see the note in Handler. Kept so the next attempt does not have
+// to rewrite it.
+var _ = discoverShim
