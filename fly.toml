@@ -17,11 +17,21 @@ primary_region = 'iad'
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  # see the note below on why this machine stays up
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  # Zero is affordable because the server is stateless: a machine that stops
-  # between requests loses nothing, and a cold start costs about a second.
-  min_machines_running = 0
+  # One machine, always running.
+  # 
+  # The server is stateful, because a streamable-HTTP client opens an SSE
+  # stream with GET and ends a session with DELETE — and a stateless server
+  # answers both with 405, which reads to the client as "the connection could
+  # not be set up". Sessions therefore live in this process's memory, and a
+  # machine that stops between requests takes them with it.
+  # 
+  # So the choice is: pay for one small machine to stay up, or lose sessions
+  # intermittently depending on how long the client paused. The second is not
+  # a saving, it is a bug with a billing benefit.
+  min_machines_running = 1
 
   [http_service.concurrency]
     type = 'requests'
