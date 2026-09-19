@@ -34,9 +34,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -282,6 +284,32 @@ func logRequests(next http.Handler) http.Handler {
 				}
 				_ = json.Unmarshal(raw, &probe)
 				method = probe.Method
+
+				/*
+				 * When there is no `method`, describe the shape rather than the
+				 * content. A batch arrives as an array and a response carries
+				 * `result` or `error`; both logged as a bare "POST", which said
+				 * only that something arrived, not what it was.
+				 *
+				 * Keys, never values: tool arguments are an athlete's training
+				 * data, and a log is the wrong place for it.
+				 */
+				if method == "" {
+					var shape any
+					if json.Unmarshal(raw, &shape) == nil {
+						switch node := shape.(type) {
+						case []any:
+							method = fmt.Sprintf("batch[%d]", len(node))
+						case map[string]any:
+							keys := make([]string, 0, len(node))
+							for k := range node {
+								keys = append(keys, k)
+							}
+							sort.Strings(keys)
+							method = "object{" + strings.Join(keys, ",") + "}"
+						}
+					}
+				}
 			}
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 		}
