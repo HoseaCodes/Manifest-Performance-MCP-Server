@@ -41,7 +41,21 @@ func main() {
 
 	switch strings.ToLower(os.Getenv("MCP_TRANSPORT")) {
 	case "http":
-		runHTTP(apiBaseURL, os.Getenv("MCP_STATELESS") == "true")
+		/*
+		 * Stateless by default for a remote server.
+		 *
+		 * The SDK keeps sessions in process memory. That is fine for a process
+		 * that stays up, and wrong for anything that can be restarted between a
+		 * client's requests — Fly stops an idle machine, so a session created
+		 * before the pause is unknown after it. The failure is intermittent and
+		 * depends on how long the client waited, which is the hardest kind to
+		 * attribute.
+		 *
+		 * These tools are request/response only and never initiate anything, so
+		 * sessions buy nothing here. MCP_STATEFUL=true restores them for a
+		 * deployment that genuinely stays warm.
+		 */
+		runHTTP(apiBaseURL, os.Getenv("MCP_STATEFUL") != "true")
 	default:
 		runStdio(apiBaseURL)
 	}

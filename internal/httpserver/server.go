@@ -31,8 +31,10 @@ told out of band.
 package httpserver
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -196,8 +198,8 @@ func Handler(cfg Config) http.Handler {
 		return server
 	}, mcpOptions)
 
-	mux.Handle("/mcp", requireBearer(cfg, mcpHandler))
-	mux.Handle("/mcp/", requireBearer(cfg, mcpHandler))
+	mux.Handle("/mcp", logRequests(requireBearer(cfg, mcpHandler)))
+	mux.Handle("/mcp/", logRequests(requireBearer(cfg, mcpHandler)))
 
 	return mux
 }
@@ -228,6 +230,44 @@ func requireBearer(cfg Config, next http.Handler) http.Handler {
 			})
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+/*
+logRequests records which JSON-RPC method each call carries.
+
+Added after a client connected, called nothing, and wrote a session from its own
+memory instead — and there was no way to tell from this side whether it had
+asked for the tools at all. "It didn't use the tools" and "it never saw them"
+look identical without this, and they have opposite fixes.
+
+The body is read and replaced rather than consumed, so the handler still sees
+it. Only the method name is logged: the arguments are an athlete's training
+data, and this is not the place for it.
+*/
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := ""
+		if r.Body != nil && r.Method == http.MethodPost {
+			// Bounded: a malformed or hostile body must not be buffered whole
+			// just to name it.
+			raw, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+			_ = r.Body.Close()
+			if err == nil {
+				var probe struct {
+					Method string `json:"method"`
+				}
+				_ = json.Unmarshal(raw, &probe)
+				method = probe.Method
+			}
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+		}
+
+		if method == "" {
+			method = r.Method
+		}
+		log.Printf("mcp %s", method)
 		next.ServeHTTP(w, r)
 	})
 }

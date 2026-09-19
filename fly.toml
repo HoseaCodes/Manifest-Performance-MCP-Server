@@ -19,8 +19,8 @@ primary_region = 'iad'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  # Zero, deliberately. This serves a handful of scheduled generations a day;
-  # paying to idle between them buys nothing, and a cold start costs a second.
+  # Zero is affordable because the server is stateless: a machine that stops
+  # between requests loses nothing, and a cold start costs about a second.
   min_machines_running = 0
 
   [http_service.concurrency]
