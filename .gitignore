@@ -1,13 +1,17 @@
-# Compiled binary
+# Compiled binaries
 /bin/
 /workout-mcp
+bootstrap
 
-# Go workspace file — local to a developer's machine
-go.work
-go.work.sum
+# Lambda deployment artefact — rebuilt by `make lambda-zip`
+*.zip
 
 # Never commit a token or a base URL for a live deployment
 .env
 .env.local
+
+# Go workspace file — local to a developer's machine
+go.work
+go.work.sum
 
 .DS_Store

@@ -53,6 +53,21 @@ type Config struct {
 	AuthorizationServer string
 	// Version reported to clients.
 	Version string
+
+	/*
+	 * Stateless runs without server-side session state.
+	 *
+	 * Required on Lambda, and the reason this option exists: the SDK keeps
+	 * sessions in a map in process memory, and each Lambda invocation may land
+	 * in a different container. A session established on one would be unknown
+	 * to the next, so a client would be told its session id is invalid partway
+	 * through a conversation — intermittently, and more often under load, which
+	 * is the worst way to find out.
+	 *
+	 * The cost is that the server cannot initiate requests to the client. These
+	 * tools never do: every one is a call and a reply.
+	 */
+	Stateless bool
 }
 
 func bearerFrom(r *http.Request) string {
@@ -155,6 +170,15 @@ func Handler(cfg Config) http.Handler {
 	 * be per-athlete at all. The tools are registered against a client that
 	 * holds this caller's credential and nothing else.
 	 */
+	mcpOptions := &mcp.StreamableHTTPOptions{
+		Stateless: cfg.Stateless,
+		// Plain JSON rather than an event stream when stateless. API Gateway
+		// buffers responses, so a stream would be held until complete and
+		// arrive as one chunk anyway — the appearance of streaming without any
+		// of it.
+		JSONResponse: cfg.Stateless,
+	}
+
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		api, err := client.New(cfg.APIBaseURL, bearerFrom(r))
 		if err != nil {
@@ -170,7 +194,7 @@ func Handler(cfg Config) http.Handler {
 		}, nil)
 		tools.Register(server, api)
 		return server
-	}, nil)
+	}, mcpOptions)
 
 	mux.Handle("/mcp", requireBearer(cfg, mcpHandler))
 	mux.Handle("/mcp/", requireBearer(cfg, mcpHandler))

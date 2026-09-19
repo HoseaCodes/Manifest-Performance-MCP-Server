@@ -41,7 +41,7 @@ func main() {
 
 	switch strings.ToLower(os.Getenv("MCP_TRANSPORT")) {
 	case "http":
-		runHTTP(apiBaseURL)
+		runHTTP(apiBaseURL, os.Getenv("MCP_STATELESS") == "true")
 	default:
 		runStdio(apiBaseURL)
 	}
@@ -69,17 +69,23 @@ func runStdio(apiBaseURL string) {
 	}
 }
 
-func runHTTP(apiBaseURL string) {
-	cfg := httpserver.Config{
+func configFromEnv(apiBaseURL string) httpserver.Config {
+	return httpserver.Config{
 		APIBaseURL:          apiBaseURL,
-		PublicURL:           os.Getenv("MCP_PUBLIC_URL"),
+		PublicURL:           strings.TrimRight(os.Getenv("MCP_PUBLIC_URL"), "/"),
 		AuthorizationServer: os.Getenv("STORM_GATE_ISSUER"),
 		Version:             version,
 	}
+}
 
-	// Checked at startup, because each is only used when a client is already
-	// mid-handshake — a missing value would surface as an unexplained failure
-	// during someone's first connection attempt rather than as a boot error.
+/*
+mustBeServable refuses to start a remote server that cannot serve correctly.
+
+Each of these is only read when a client is already mid-handshake, so a missing
+value would otherwise surface as an unexplained failure during someone's first
+connection attempt rather than as a boot error somebody sees.
+*/
+func mustBeServable(cfg httpserver.Config) {
 	missing := []string{}
 	if strings.TrimSpace(cfg.APIBaseURL) == "" {
 		missing = append(missing, "MANIFEST_API_BASE_URL")
@@ -91,15 +97,21 @@ func runHTTP(apiBaseURL string) {
 		missing = append(missing, "STORM_GATE_ISSUER")
 	}
 	if len(missing) > 0 {
-		log.Fatalf("workout-mcp: http mode requires %s", strings.Join(missing, ", "))
+		log.Fatalf("workout-mcp: remote mode requires %s", strings.Join(missing, ", "))
 	}
 
 	// Refused rather than ignored. A token in the environment cannot be used by
-	// this mode, and an operator who set one believes it is doing something.
+	// a remote mode, and an operator who set one believes it is doing something.
 	if os.Getenv("MANIFEST_SERVICE_TOKEN") != "" {
-		log.Fatalf("workout-mcp: MANIFEST_SERVICE_TOKEN must not be set in http mode — " +
+		log.Fatalf("workout-mcp: MANIFEST_SERVICE_TOKEN must not be set in a remote mode — " +
 			"it would imply one athlete's credential serves every caller, which it does not")
 	}
+}
+
+func runHTTP(apiBaseURL string, stateless bool) {
+	cfg := configFromEnv(apiBaseURL)
+	cfg.Stateless = stateless
+	mustBeServable(cfg)
 
 	addr := os.Getenv("MCP_HTTP_ADDR")
 	if addr == "" {

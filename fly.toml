@@ -1,0 +1,43 @@
+# Fly.io deployment.
+#
+# Chosen over Lambda for two reasons that surfaced in testing:
+#
+#   1. **Headers arrive intact.** Lambda Function URLs rewrite
+#      `WWW-Authenticate` to `x-amzn-Remapped-www-authenticate`, so an MCP
+#      client never sees the challenge that tells it where to authenticate.
+#   2. **Sessions work.** A long-lived process can hold MCP sessions in memory.
+#      On Lambda each invocation may land in a different container, which forced
+#      stateless mode.
+
+app = 'workout-mcp'
+primary_region = 'iad'
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  # Zero, deliberately. This serves a handful of scheduled generations a day;
+  # paying to idle between them buys nothing, and a cold start costs a second.
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 50
+    hard_limit = 100
+
+# Liveness only. It does not check the application API: a dependency being down
+# is not this process being unhealthy, and conflating them makes a restart look
+# like a fix.
+[[http_service.checks]]
+  interval = '30s'
+  timeout = '5s'
+  grace_period = '10s'
+  method = 'GET'
+  path = '/healthz'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
