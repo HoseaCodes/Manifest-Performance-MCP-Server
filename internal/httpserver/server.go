@@ -48,6 +48,9 @@ import (
 	"github.com/hoseacodes/manifestfitness/workout-mcp/internal/tools"
 )
 
+// serverVersion is reported by both the SDK handshake and the discover probe.
+var serverVersion = "0.2.0"
+
 type Config struct {
 	// APIBaseURL is the application API this proxies to.
 	APIBaseURL string
@@ -197,6 +200,7 @@ func Handler(cfg Config) http.Handler {
 			return nil
 		}
 
+		serverVersion = cfg.Version
 		server := mcp.NewServer(&mcp.Implementation{
 			Name:    "workout-mcp",
 			Version: cfg.Version,
@@ -205,8 +209,13 @@ func Handler(cfg Config) http.Handler {
 		return server
 	}, mcpOptions)
 
-	mux.Handle("/mcp", logRequests(requireBearer(cfg, mcpHandler)))
-	mux.Handle("/mcp/", logRequests(requireBearer(cfg, mcpHandler)))
+	// Order matters: the discover shim sits *inside* requireBearer, so a probe
+	// still needs a credential. Answering it earlier — where the body is
+	// already buffered for logging — was a hole around the bearer check, and a
+	// test caught it.
+	handler := logRequests(requireBearer(cfg, discoverShim(mcpHandler)))
+	mux.Handle("/mcp", handler)
+	mux.Handle("/mcp/", handler)
 
 	return mux
 }

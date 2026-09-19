@@ -273,3 +273,92 @@ func TestSessionIdIsExposedToTheBrowser(t *testing.T) {
 		}
 	}
 }
+
+/*
+TestDiscoverIsAnswered covers the probe that decided whether tools were ever
+requested.
+
+ChatGPT calls SEP-2575 `server/discover` before anything else. The SDK's
+transport rejects it with `-32601`, which is a legal answer that a client is
+meant to fall back from — and this one does not. It reports "no callable
+actions" and never sends `tools/list`, so tools that exist and are valid are
+simply never asked for.
+*/
+func TestDiscoverIsAnswered(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+usableTestToken())
+	req.Header.Set("Content-Type", "application/json")
+
+	res := httptest.NewRecorder()
+	testHandler().ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.Code)
+	}
+
+	var envelope struct {
+		Result struct {
+			SupportedVersions []string `json:"supportedVersions"`
+		} `json:"result"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode: %v — body %s", err, res.Body.String())
+	}
+	if envelope.Error != nil {
+		t.Fatalf("discover returned an error: %v", envelope.Error)
+	}
+	if len(envelope.Result.SupportedVersions) == 0 {
+		t.Fatal("no supportedVersions returned")
+	}
+}
+
+/*
+The versions advertised must be ones this server actually serves.
+
+Claiming 2026-07-28 would satisfy the probe and then strand the client on a
+stateless protocol the SDK's transport does not implement. Advertising older
+versions is what makes the client fall back to `initialize`, which works.
+*/
+func TestDiscoverDoesNotClaimTheStatelessProtocol(t *testing.T) {
+	for _, v := range servedProtocolVersions {
+		if v >= "2026-07-28" {
+			t.Errorf("advertises %q, which this transport does not serve", v)
+		}
+	}
+	if len(servedProtocolVersions) == 0 {
+		t.Fatal("no versions advertised; a client cannot negotiate at all")
+	}
+}
+
+// A discover probe still needs a credential: answering it locally must not
+// become a hole around the bearer check.
+func TestDiscoverStillRequiresAToken(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	res := httptest.NewRecorder()
+	testHandler().ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", res.Code)
+	}
+}
+
+// Anything that is not a discover probe must reach the SDK unchanged.
+func TestNonDiscoverRequestsPassThrough(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+usableTestToken())
+	req.Header.Set("Content-Type", "application/json")
+
+	res := httptest.NewRecorder()
+	testHandler().ServeHTTP(res, req)
+
+	// Whatever the SDK answers, it must not be this package's discover reply.
+	if strings.Contains(res.Body.String(), "supportedVersions") {
+		t.Error("a non-discover request was answered by the discover shim")
+	}
+}
