@@ -218,3 +218,58 @@ func TestExpiredOrNonDelegatedTokensAreRefusedAtTheHandshake(t *testing.T) {
 		}
 	}
 }
+
+/*
+TestPreflightIsNotAuthenticated covers a failure with no visible symptom.
+
+A browser sends OPTIONS before a cross-origin request carrying an Authorization
+header, and deliberately sends it *without* that header. Answering 401 fails the
+preflight, so the real request is never made: the client reports only that the
+connection could not be set up, and the server logs nothing at all, because
+nothing arrived. Both sides look fine in isolation.
+*/
+func TestPreflightIsNotAuthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
+	req.Header.Set("Origin", "https://chatgpt.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "authorization, content-type")
+
+	res := httptest.NewRecorder()
+	testHandler().ServeHTTP(res, req)
+
+	if res.Code == http.StatusUnauthorized {
+		t.Fatal("preflight was refused for want of a credential it cannot carry")
+	}
+	if res.Code != http.StatusNoContent && res.Code != http.StatusOK {
+		t.Errorf("status = %d, want 204", res.Code)
+	}
+
+	allowed := res.Header().Get("access-control-allow-headers")
+	if !strings.Contains(strings.ToLower(allowed), "authorization") {
+		t.Errorf("allow-headers = %q, want it to permit authorization", allowed)
+	}
+}
+
+// The credential is still required on the real request; only the preflight is exempt.
+func TestPreflightExemptionDoesNotWeakenTheRealRequest(t *testing.T) {
+	res := httptest.NewRecorder()
+	testHandler().ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("POST status = %d, want 401", res.Code)
+	}
+}
+
+// A header the browser cannot read is a header the client does not have.
+func TestSessionIdIsExposedToTheBrowser(t *testing.T) {
+	req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
+	res := httptest.NewRecorder()
+	testHandler().ServeHTTP(res, req)
+
+	exposed := strings.ToLower(res.Header().Get("access-control-expose-headers"))
+	for _, want := range []string{"mcp-session-id", "www-authenticate"} {
+		if !strings.Contains(exposed, want) {
+			t.Errorf("expose-headers = %q, want it to include %q", exposed, want)
+		}
+	}
+}

@@ -148,6 +148,11 @@ func Handler(cfg Config) http.Handler {
 	 * string lands in access logs, proxy logs and Referer headers.
 	 */
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		writeCORS(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"resource":                 cfg.PublicURL,
 			"authorization_servers":    []string{cfg.AuthorizationServer},
@@ -221,6 +226,23 @@ func requireBearer(cfg Config, next http.Handler) http.Handler {
 		`/.well-known/oauth-protected-resource"`
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		/*
+		 * A preflight is not a request for anything, and carries no credential.
+		 *
+		 * Browsers send OPTIONS before a cross-origin call with an Authorization
+		 * header, deliberately without that header. Answering 401 fails the
+		 * preflight, so the real request is never sent — the connection simply
+		 * cannot be established, and nothing reaches the server to explain why.
+		 * That is what this looked like from the outside: silence.
+		 */
+		if r.Method == http.MethodOptions {
+			writeCORS(w)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		writeCORS(w)
+
 		token := bearerFrom(r)
 		if token == "" || !usable(token) {
 			w.Header().Set("WWW-Authenticate", challenge)
@@ -270,6 +292,23 @@ func logRequests(next http.Handler) http.Handler {
 		log.Printf("mcp %s", method)
 		next.ServeHTTP(w, r)
 	})
+}
+
+/*
+writeCORS permits the browser-side calls a remote MCP client makes.
+
+`Mcp-Session-Id` is both accepted and exposed: a stateful server returns it on
+initialize and the client must read it back, and a header a browser cannot read
+is a header the client does not have.
+*/
+func writeCORS(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("access-control-allow-origin", "*")
+	h.Set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS")
+	h.Set("access-control-allow-headers",
+		"authorization, content-type, accept, mcp-session-id, mcp-protocol-version, last-event-id")
+	h.Set("access-control-expose-headers", "mcp-session-id, www-authenticate")
+	h.Set("access-control-max-age", "86400")
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
