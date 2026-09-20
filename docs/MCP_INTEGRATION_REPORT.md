@@ -102,10 +102,62 @@ These were real, and any strict MCP client would have hit most of them:
    browser-to-backend exchange takes.
 6. **No RFC 8414 metadata and no RFC 7591 registration endpoint.** Both added.
 
-## Unresolved
+## Two further findings
 
-ChatGPT retrieves the tool list and does not expose the tools. That behaviour is
-inside the connector platform and is not reproducible with any other MCP client
-tested.
+**A single tool with an empty schema fares no better.** A second endpoint,
+`/mcp-min`, exposes one tool — `ping`, no arguments,
+`{"type":"object","properties":{},"additionalProperties":false}`, no unions, no
+`$ref`, nothing nested. A connector pointed at it binds zero actions in exactly
+the same way. **Nothing about the real tools' schemas is responsible.**
+
+**Answering SEP-2575 `server/discover` makes it worse.** When the SDK answers
+`-32601`, ChatGPT falls back to `initialize` + `tools/list` and receives the
+tools. When the probe is answered — honestly, advertising the versions this
+server actually speaks — ChatGPT stops at that point and never requests tools at
+all. The refusal is therefore the better behaviour with this client, and the
+shim has been removed.
+
+**The client's behaviour is not consistent between attempts.** On the same
+connector and server, within twenty minutes:
+
+```
+20:54:45  /mcp  initialize → notifications/initialized → tools/list   (tools delivered)
+21:11:33  /mcp  POST with an empty body
+21:14:10  /mcp  POST with an empty body  (x3)
+21:14:29  /mcp  server/discover, then nothing
+```
+
+These requests contain no parseable JSON-RPC body and cannot be correlated with
+a standard MCP operation implemented by this server. Whether they are an
+undocumented platform probe is not something this end can determine.
+
+## Conclusion
+
+ChatGPT's connector platform successfully authenticates and, in some attempts,
+completes `initialize` and `tools/list`, receiving valid tools. It nevertheless
+binds zero callable actions and reports `MCP servers: none`. The failure
+reproduces against a separate endpoint exposing only a schema-free `ping` tool,
+ruling out the production tools and their JSON Schemas. Other MCP clients work
+against the same server and protocol.
+
+This is an OpenAI-side connector defect or an undocumented compatibility
+requirement, not an ordinary MCP server implementation failure.
+
+## Requested from OpenAI
+
+1. Whether SEP-2575 `server/discover` is currently **required, optional,
+   experimental or unsupported** for ChatGPT connectors. Answering the probe and
+   refusing it produce different failures here, and neither is documented.
+2. Why the platform reports `MCP servers: none` after successfully contacting an
+   MCP endpoint and receiving a valid tool list.
+3. Why ChatGPT sometimes sends POST requests with no parseable JSON-RPC body.
+4. The internal rejection reason when a returned tool list produces zero
+   registered actions — that reason is not surfaced anywhere in the UI or to the
+   server.
+5. Clearing or rebuilding any cached connector metadata for this plugin id.
+6. Whether creating a new development plugin id is the only available way to
+   bypass that cache.
 
 **Plugin id:** `dev-6aae57cdfb40819198ef42dde71fda5d`
+**Endpoints:** `https://workout-mcp.fly.dev/mcp` (four tools),
+`https://workout-mcp.fly.dev/mcp-min` (one schema-free `ping` tool)
