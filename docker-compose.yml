@@ -1,0 +1,15 @@
+services:
+  workout-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: workout-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_STATEFUL: "true"
+      PORT: 8080
+    ports:
+      - "192.168.0.47:3003:8080"
